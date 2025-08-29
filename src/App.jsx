@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import PreviewPane from "./components/PreviewPane";
 import ClauseLibrary from "./components/ClauseLibrary";
 import useSpeechRecognition from "./hooks/useSpeechRecognition";
+import { handleVoiceCommand } from "./utils/commandHandler";
 
 export default function App() {
   const [editor, setEditor] = useState(null);
@@ -35,128 +36,36 @@ export default function App() {
   };
 
   // Dictation: plain text
-  const onText = useCallback(
-    (text) => {
-      if (!editor) return;
-      const sel = editor.getSelection(true) || { index: editor.getLength(), length: 0 };
-      editor.insertText(sel.index, text);
-      editor.setSelection(sel.index + text.length);
-    },
-    [editor]
-  );
+  const onText = useCallback((text) => {
+    if (!editor) return;
+    const sel = editor.getSelection(true) || { index: editor.getLength(), length: 0 };
+    editor.insertText(sel.index, text);
+    editor.setSelection(sel.index + text.length);
+  }, [editor]);
 
-  // Dictation: commands + voice clause trigger
-  const onCommand = useCallback(
-    (cmd, raw) => {
-      if (!editor) return;
-
-      // Voice clause trigger
-      const ta = raw?.match(/கிளாஸ்\s+சேர்\s+(.+)/i) || raw?.match(/கிளாஸ்\s+சேர்க்கவும்\s+(.+)/i);
-      const en = raw?.toLowerCase().match(/add\s+clause\s+(.+)/i);
-      const m = ta || en;
-      if (m && m[1]) {
-        setVoiceClause(m[1].trim());
-        setClOpen(true);
-        return;
-      }
-
-      const sel = editor.getSelection(true) || { index: editor.getLength(), length: 0 };
-      const insert = (t) => {
-        editor.insertText(sel.index, t);
-        editor.setSelection(sel.index + t.length);
-      };
-
-      switch (cmd) {
-        case "new line":
-        case "புதிய வரி":
-          insert("\n");
-          break;
-        case "new paragraph":
-        case "புதிய பதிவை":
-        case "புதிய பதிவு":
-        case "புதிய பத்தி":
-          insert("\n\n");
-          break;
-        case "bold":
-        case "தடித்த":
-          editor.format("bold", true);
-          break;
-        case "italic":
-        case "சாய்வு":
-          editor.format("italic", true);
-          break;
-        case "underline":
-        case "அடிக்கோடு":
-          editor.format("underline", true);
-          break;
-        case "insert date":
-        case "தேதி சேர்":
-        case "தேதி சேர்க்கவும்": {
-          const d = new Date().toLocaleDateString("ta-IN");
-          insert(d + " ");
-          break;
-        }
-        case "heading one":
-        case "தலைப்பு ஒன்று":
-          editor.format("size", "huge");
-          editor.format("bold", true);
-          break;
-        case "heading two":
-        case "தலைப்பு இரண்டு":
-          editor.format("size", "large");
-          editor.format("bold", true);
-          break;
-        case "numbered list":
-        case "எண்கள் பட்டியல்":
-          editor.format("list", "ordered");
-          break;
-        case "bullet list":
-        case "புள்ளி பட்டியல்":
-          editor.format("list", "bullet");
-          break;
-
-        // Voice template names
-        case "petition template":
-        case "affidavit template":
-        case "notice template":
-        case "மனு டெம்ப்ளேட்": {
-          const map = {
-            "petition template": "petition",
-            "affidavit template": "affidavit",
-            "notice template": "notice",
-            "மனு டெம்ப்ளேட்": "petition",
-          };
-          const key = map[cmd] || "petition";
-          const evt = new Event("apply-template-" + key);
-          window.dispatchEvent(evt);
-          break;
-        }
-
-        default:
-          break;
-      }
-    },
-    [editor]
-  );
+  // Dictation: route to the unified handler; it returns true/false
+  const onCommand = useCallback((cmdId, raw) => {
+    if (!editor) return false;
+    return handleVoiceCommand(editor, cmdId, raw, { setVoiceClause, setClOpen });
+  }, [editor]);
 
   const { listening, toggle } = useSpeechRecognition({ onText, onCommand });
 
-  const loadDraft = useCallback(
-    (d) => {
-      if (!editor || !d) return;
-      setActiveId(d.id);
-      editor.setContents(d.delta);
-    },
-    [editor]
-  );
+  // Load a saved draft (from Sidebar)
+  const loadDraft = useCallback((d) => {
+    if (!editor || !d) return;
+    setActiveId(d.id);
+    editor.setContents(d.delta);
+  }, [editor]);
 
-  // Listen for TopBar + Clause Library events
+  // Listen for “open clause library” button in TopBar
   useEffect(() => {
     const open = () => setClOpen(true);
     window.addEventListener("open-clause-library", open);
     return () => window.removeEventListener("open-clause-library", open);
   }, []);
 
+  // Listen for programmatic template apply events (from voice)
   useEffect(() => {
     const makeHandler = (key) => () => {
       const e = new CustomEvent("topbar-apply", { detail: key });
@@ -188,10 +97,7 @@ export default function App() {
       <ClauseLibrary
         editor={editor}
         open={clOpen}
-        onClose={() => {
-          setClOpen(false);
-          setVoiceClause("");
-        }}
+        onClose={() => { setClOpen(false); setVoiceClause(""); }}
         voiceQuery={voiceClause}
       />
     </div>

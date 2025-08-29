@@ -1,45 +1,50 @@
 import { useRef, useState } from "react";
 
+/**
+ * Lightweight command matcher:
+ *  - exact phrases (Tamil + English)
+ *  - keyword + verb style ("சட்ட"+"நோட்டீஸ்"+"எழுது")
+ */
 const COMMAND_SETS = [
   // Legal notice write
   { id: "notice_template", keywordsAny: ["சட்ட", "நோட்டீஸ்"], verbsAny: ["எழுது", "எழுதுக", "தயார் செய்", "டெம்ப்ளேட்"] },
-  // Formatting
-  { id: "bold", phrases: ["தடித்த", "bold"] },
-  { id: "italic", phrases: ["சாய்வு", "italic"] },
-  { id: "underline", phrases: ["அடிக்கோடு", "underline"] },
-  { id: "new_line", phrases: ["புதிய வரி", "new line"] },
+
+  // Formatting / structure
+  { id: "bold",          phrases: ["தடித்த", "bold"] },
+  { id: "italic",        phrases: ["சாய்வு", "italic"] },
+  { id: "underline",     phrases: ["அடிக்கோடு", "underline"] },
+  { id: "new_line",      phrases: ["புதிய வரி", "new line"] },
   { id: "new_paragraph", phrases: ["புதிய பதிவு", "புதிய பத்தி", "new paragraph"] },
-  { id: "insert_date", phrases: ["தேதி சேர்", "தேதி சேர்க்கவும்", "insert date"] },
-  { id: "h1", phrases: ["தலைப்பு ஒன்று", "heading one"] },
-  { id: "h2", phrases: ["தலைப்பு இரண்டு", "heading two"] },
+  { id: "insert_date",   phrases: ["தேதி சேர்", "தேதி சேர்க்கவும்", "insert date"] },
+  { id: "h1",            phrases: ["தலைப்பு ஒன்று", "heading one"] },
+  { id: "h2",            phrases: ["தலைப்பு இரண்டு", "heading two"] },
   { id: "numbered_list", phrases: ["எண்கள் பட்டியல்", "numbered list"] },
-  { id: "bullet_list", phrases: ["புள்ளி பட்டியல்", "bullet list"] },
+  { id: "bullet_list",   phrases: ["புள்ளி பட்டியல்", "bullet list"] },
 
   // Line ops (broad triggers)
-  { id: "delete_line", phrases: ["இந்த வரியை அழி", "delete line", "delete this line"] },
-  { id: "start_from_line", phrases: ["இந்த வரியிலிருந்து தொடங்கு", "start from this line"] },
-  { id: "copy_line", phrases: ["நகலெடு", "copy line", "copy this line"] },
-  { id: "insert_after", phrases: ["insert line after"] },
-  { id: "insert_before", phrases: ["insert line before"] },
+  { id: "delete_line",        phrases: ["இந்த வரியை அழி", "delete line", "delete this line"] },
+  { id: "start_from_line",    phrases: ["இந்த வரியிலிருந்து தொடங்கு", "start from this line"] },
+  { id: "copy_line",          phrases: ["நகலெடு", "copy line", "copy this line"] },
+  { id: "insert_after",       phrases: ["insert line after"] },
+  { id: "insert_before",      phrases: ["insert line before"] },
+
+  // Tamil broad words that often appear around commands (to help route to handler)
+  { id: "broad_ta",           phrases: ["வரி", "இந்த வரியை அழி", "இந்த வரியிலிருந்து தொடங்கு", "நகலெடு", "சேர்க்க", "தேர்வு", "தொடங்கு"] },
 ];
 
 function normalizeTamil(s) {
-  // Normalize & trim; keep it simple and robust
   return (s || "").normalize("NFC").toLowerCase().trim();
 }
 
 function matchCommand(raw) {
   const txt = normalizeTamil(raw);
-
   for (const c of COMMAND_SETS) {
-    // Exact/broad phrase matches
     if (c.phrases && c.phrases.some(p => txt.includes(normalizeTamil(p)))) {
       return c.id;
     }
-    // Keyword + verb style (“சட்ட” + “நோட்டீஸ்” + “எழுது”)
     if (c.keywordsAny || c.verbsAny) {
       const kwOk = !c.keywordsAny || c.keywordsAny.some(k => txt.includes(normalizeTamil(k)));
-      const vbOk = !c.verbsAny || c.verbsAny.some(v => txt.includes(normalizeTamil(v)));
+      const vbOk = !c.verbsAny   || c.verbsAny.some(v => txt.includes(normalizeTamil(v)));
       if (kwOk && vbOk) return c.id;
     }
   }
@@ -61,7 +66,7 @@ export default function useSpeechRecognition({ onText, onCommand }) {
     const rec = new window.webkitSpeechRecognition();
     rec.lang = "ta-IN";
     rec.continuous = true;
-    rec.interimResults = true; // keep, but we’ll ignore for commands
+    rec.interimResults = true;   // we only act on finals below
     rec.maxAlternatives = 1;
 
     rec.onresult = (e) => {
@@ -69,19 +74,23 @@ export default function useSpeechRecognition({ onText, onCommand }) {
       const raw = (res?.[0]?.transcript || "").trim();
       if (!raw) return;
 
-      // Debug
       const cmdId = matchCommand(raw);
-      console.log("Voice CMD hit:", cmdId, "RAW:", raw, "final?", res.isFinal);
+      // Debug:
+      // console.log("Voice CMD hit:", cmdId, "RAW:", raw, "final?", res.isFinal);
 
-      // Only act on FINAL results (avoids spurious interim triggers)
-      if (!res.isFinal) return;
+      if (!res.isFinal) return; // avoid acting on interims
 
-      if (cmdId && typeof onCommand === "function") {
-        onCommand(cmdId, raw);
-        return;
+      // Let the command handler consume it; if it returns true, do nothing else
+      if (typeof onCommand === "function") {
+        try {
+          const consumed = !!onCommand(cmdId, raw, { isFinal: true });
+          if (consumed) return;
+        } catch (e) {
+          // ignore handler errors and fall through to dictation
+        }
       }
 
-      // No command? then treat as dictation
+      // Not a command → treat as dictation
       if (typeof onText === "function") {
         onText(raw + " ");
       }
